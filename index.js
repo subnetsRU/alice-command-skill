@@ -1,3 +1,13 @@
+/*
+    Author: Nikolaev Dmitry (VI:RUS)
+    Licence: MIT
+    
+    Version: 0.2.0
+    Date: 28.06.2020
+    Description: https://wiki.yaboard.com/s/nw
+    Source: https://github.com/subnetsRU/alice-command-skill
+*/
+
 const fs = require('fs');
 const https = require('https');
 const express = require('express');			//https://expressjs.com/ru/4x/api.html
@@ -5,43 +15,8 @@ const { includes, lowerCase, keys } = require('lodash');
 const sprintf = require("sprintf-js").sprintf;        //https://www.npmjs.com/package/sprintf-js
 const exit = process.exit;
 
-var config = {
-    //SSL сертификаты для сервера навыка. Можно использовать как самоподписанные так и sslforfree.com или let's encript
-    ssl: {
-	crt: '/path/to/ssl.crt',		//путь до файла с SSL сертификатом
-	key: '/path/to/ssl.key',		//путь до файла с ключом от SSL сертификата
-    },
-    port: 8443,		//порт, на котором будут ожидаться запросы от яндекс диалогов
-    //куки для авторизации на https://yandex.ru/quasar
-    cookie: '',
-    speaker: '2077cfa6-2365-4ed4-97d5-4b46895762af',	//id устройства яндекс.станция, взять на https://iot.quasar.yandex.ru/m/user/devices
-    auth:{
-	//Кому разрешено использовать навык (несколько user_id/application перечисляются через запятую)
-	 user_id: ['REPLACE-BY-USER-ID'],
-	 application: ['REPLACE-BY-APPLICATION-ID'],
-	 //
-    },
-    intents: {		//интенты
-	help: ['справка', 'помощь', 'что ты умеешь'],
-	enable: ['включи','включить'],
-	disable: ['выключи','выключить']
-    },
-    scenarios: {	//id взять на https://iot.quasar.yandex.ru/m/user/scenarios
-	//формат: 'название сценария': 'ID сценария'
-	enable: {	//сценарии на включение
-	    'люстру': '1ca147ab-28a3-4c13-adcf-f71f986098ca',	//сценарий: включи люстру
-	    'лампу': '1ca147ab-28a3-4c13-adcf-f71f986098ca',	//сценарий: включи лампу
-	    'телек': 'ff1e8168-dd88-43cb-81aa-b3cc22e4c2ed',	//сценарий: включи телек
-	},
-	disable:{	//сценарии на выключение
-	    'люстру': 'b7386380-d2e4-4e1d-94f5-3fb4ad2409e9',	//сценарий: выключи люстру
-	    'лампу': 'b7386380-d2e4-4e1d-94f5-3fb4ad2409e9',	//сценарий: выключи лампу
-	    'телек': 'ff1e8168-dd88-43cb-81aa-b3cc22e4c2ed',	//сценарий: выключи телек
-	}
-    },
-    csrf: '',	//ничего сюда вводить не надо
-};
-
+var config = require("./config.js");
+config.csrf = '';
 config.port = config.port || 8443;
 
 var app = express();
