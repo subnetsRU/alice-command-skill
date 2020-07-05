@@ -18,10 +18,14 @@ module.exports = {
 	 application: ['REPLACE-BY-APPLICATION-APPLICATION-ID'],
 	 //
     },
+    timer_period: 1,	//с какой переодиностью обрабатывать таймеры, значение задавать в минутах, по умолчанию 5 минут.
     intents: {		//интенты, навык будет реагировать на них
 	help: ['справка', 'помощь', 'что ты умеешь'],
 	enable: ['включи','включить'],
 	disable: ['выключи','выключить']
+	timers: ['таймер'],
+	action_add: ['добавить','добавь'],
+	action_del: ['удалить','удали'],
     },
     scenarios: {	//id сценариев взять на https://iot.quasar.yandex.ru/m/user/scenarios (example: {"id":"49c84e35-d1f3-4f8b-bc26-fe1ddd383d3f","name":"Включи люстру","icon":"day","devices":["люстра"]})
 	//формат: 'имя, которое вы использовали в созданном вами сценарии': 'ID сценария'

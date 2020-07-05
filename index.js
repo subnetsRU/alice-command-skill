@@ -2,10 +2,12 @@
     Author: Nikolaev Dmitry (VI:RUS)
     Licence: MIT
     
-    Version: 0.2.0
-    Date: 28.06.2020
+    Version: 0.3.0
+    Date: 05.07.2020
     Description: https://wiki.yaboard.com/s/nw
     Source: https://github.com/subnetsRU/alice-command-skill
+    
+    Yaboard: https://yaboard.com/task/5da05e4b75e2e73e5c847c84
 */
 
 const fs = require('fs');
@@ -19,6 +21,38 @@ var config = require("./config.js");
 config.csrf = '';
 config.port = config.port || 8443;
 
+var timers = refreshTimers();
+var timers_active = {};
+function refreshTimers(){
+    var timers = [];
+    if (fs.existsSync('./timers.json')) {
+	var tmp = fs.readFileSync('./timers.json').toString();
+	try {
+	    tmp = json = JSON.parse(tmp);
+	    if (Array.isArray(tmp)){
+		timers = tmp;
+	    }
+	}
+	catch(error){
+	    console.error('refreshTimers failed:',error);
+	}
+    }
+ return timers;
+}
+
+var timer_interval = ((typeof config.timer_period != "undefined" && config.timer_period > 0) ? (config.timer_period * 60) : (5*60)) * 1000;
+//setTimeout(proc_timers,timer_interval);
+setInterval(async () => {
+    var time = new Date();
+    let printable_date = sprintf("%02d.%02d.%04d %02d:%02d:%02d",time.getDate(),time.getMonth(),time.getFullYear(),time.getHours(),time.getMinutes(),time.getSeconds());
+    console.log(sprintf('[%s] Start timers process. Timers total: %d',printable_date,timers.length));
+    try {
+        await proc_timers();
+    } catch (e) {
+        console.warn("caught: " + e.message)
+    }
+}, timer_interval);
+
 var app = express();
 const serverOptions = {
   key: fs.readFileSync(config.ssl.key),
@@ -26,7 +60,7 @@ const serverOptions = {
   requestCert: false,
 };
 
-function get_csrf(){
+async function get_csrf(){
     let promise = new Promise((resolve, reject) => {
 	    csrf = '';
 	    request =  '';
@@ -152,8 +186,8 @@ async function make_response(json,resp){
 		resp.response.tts = resp.response.text;
 	    }
 	}
-	catch (err){
-	    console.error('words parser failed');
+	catch (error){
+	    console.error('words parser failed:',error);
 	}
 	
 	if (typeof res != "undefined" && typeof res.cmd != "undefined"){
@@ -179,8 +213,14 @@ async function wys(str){
 	search = {
 	    enable: [],
 	    disable: [],
+	    intents: {},
 	};
 	var end = false;
+	
+	if (str === 'ping') {
+	    text.push('pong');
+	    end = true;
+	}
 	
 	if (end == false){
 	    for(let intent of config.intents.help){
@@ -191,7 +231,152 @@ async function wys(str){
 	    }
 	}
 	
-	if (end == false && typeof config.scenarios != "undefined"){
+	if (end == false){
+	    getIntents = keys(config.intents);
+	    for (let i of getIntents){
+		console.debug('getIntents',i);
+		if (typeof config.intents[i] == "object"){
+		    //for (let item of config.intents[i]) {
+		    for (ik = 0; ik < config.intents[i].length; ik++){
+			let item = config.intents[i][ik];
+			console.debug('\t'+ ik + ': ' + item + ' => ' +includes(str, item));
+			if (includes(str, item)) {
+			    if (typeof search.intents[i] == "undefined"){
+				search.intents[i] = 0;
+			    }
+			    search.intents[i]++;
+			}
+		    }
+		}
+	    }
+	    
+	    //console.log('found intents [' + search.intents.join(' ') + ']',search.intents.length);
+	    console.log(search);
+	}
+	if (typeof config.scenarios == "undefined"){
+	    text.push('Сценарии отсутствуют. Проверьте конфигурационный файл навыка.');
+	    end = true;
+	}
+	
+	if (end == false && (typeof search.intents['timers'] != "undefined")){
+	    var actions = config.intents.action_add.concat(config.intents.action_del);
+	    var en_dis = config.intents.enable.concat(config.intents.disable);
+	    var action = false;
+	    var saction = false;
+	    var scenario = false;
+	    var twhen = false;
+	    var eSC = [];
+	    var dSC = [];
+	    for(let intent in config.scenarios.enable){
+		eSC.push(intent);
+	    }
+	    for(let intent in config.scenarios.disable){
+		dSC.push(intent);
+	    }
+	    
+	    let regexp = '^(' + actions.join('|') +')\\s(' + config.intents.timers.join('|') + ')\\s(' + en_dis.join('|') +')\\s(' + eSC.join('|') + ')\\s(.*)$';
+	    let re = new RegExp(regexp,'u');
+	    let matches = str.match(re);
+	    if (matches !== null){
+		if (typeof matches[1] != "undefined"){
+		    for(let intent of config.intents.action_add){
+			if(intent == matches[1]){
+			    action = 'add';
+			}
+		    }
+		    for(let intent of config.intents.action_del){
+			if(intent == matches[1]){
+			    action = 'delete';
+			}
+		    }
+		}
+		if (typeof matches[3] != "undefined"){
+		    for(let intent of config.intents.enable){
+			if(intent == matches[3]){
+			    saction = 'enable';
+			}
+		    }
+		    for(let intent of config.intents.disable){
+			if(intent == matches[3]){
+			    saction = 'disable';
+			}
+		    }
+		}
+		if (typeof matches[4] != "undefined" && saction !== false){
+		    if (typeof config.scenarios[saction] !== "undefined" && typeof config.scenarios[saction][matches[4]] != "undefined"){
+			scenario = {name: matches[4], id: config.scenarios[saction][matches[4]]};
+		    }
+		}
+		if (typeof matches[5] != "undefined"){
+		    if ((/(будням|будни|выходным|выходные|часов|часа|час)/).test(matches[5])){
+			twhen = matches[5];
+		    }
+		}
+	    }
+	    if (scenario === false){
+		text.push('Название сценария не найдено.');
+	    }else if (action === false){
+		text.push('Отсутствует действие с таймером.');
+	    }else if (saction === false){
+		text.push('Отсутствует действие со сценарием.');
+	    }else if (twhen === false){
+		text.push('Отсутствует указание времени.');
+	    }else{
+		tcfg = {name: scenario.name, action: saction, id: scenario.id};
+		//по будням
+		//по выходным
+		//(в|с) X часов
+		//(в|с) X часов X минут
+		if ((/(будням|будни|выходным|выходные)/).test(twhen)){
+		    if ((/(будням|будни)/).test(twhen)){
+			tcfg.days = [1,2,3,4,5];
+		    }else if ((/(выходным|выходные)/).test(twhen)){
+			tcfg.days = [6,0];
+		    }
+		}else{
+		    tcfg.days = [0,1,2,3,4,5,6];
+		}
+		regexp = /(в|с)\s(\d+)\s(часов|часа|час)/;
+		matches = twhen.match(regexp);
+		if (matches != null){
+		    if (typeof matches[2] != "undefined"){
+			tcfg.hour = matches[2];
+		    }
+		}
+		regexp = /(в|с)\s\d+\sчасов\s(\d+)\s(минут|минуты)/;
+		matches = twhen.match(regexp);
+		if (matches != null){
+		    if (typeof matches[2] != "undefined"){
+			tcfg.min = matches[2];
+		    }
+		}
+		
+		if (action == 'add'){
+		    timers.push(tcfg);
+		    text.push("Таймер добавлен.");
+		}else if(action == 'delete'){
+		    let del = 0;
+		    timers.forEach(function(timer, i, arr) {
+			if ( (typeof timer.action !== "undefined" && timer.action == tcfg.action) && (typeof timer.name !="undefined" && timer.name == tcfg.name) ){
+			    if ( (typeof timer.days !="undefined" && timer.days.length == tcfg.days.length) && (typeof timer.hour != "undefined" && timer.hour == tcfg.hour) ){
+				timers.splice(i, 1);
+				del++;
+			    }
+			}
+		    });
+		    if (del > 0){
+			text.push("Таймер удален.");
+		    }else{
+			text.push("Таймер для удаления не найден.");
+		    }
+		}
+		fs.writeFileSync('./timers.json',JSON.stringify(timers));
+	    }
+	    console.debug(action,saction,scenario,(typeof tcfg == "undefined") ? null:tcfg);
+	    end = true;
+	}
+	
+	if (end == false){
 	    and = str.split(/\sи\s/ig);
 	    //console.log('and',and);
 	    let last = '';
@@ -282,6 +467,83 @@ async function wys(str){
 	resolve(ret);
     });
  return promise;
+}
+
+async function proc_timers(){
+    //console.log('timers',timers);
+    var time = new Date();
+    var now = (time.getTime()/1000);
+    var day = time.getDay();
+    var start_time = false;
+    var end_time = false;
+    var res = false;
+    var cmds = [];
+    timers = refreshTimers();
+    
+    timers.forEach(function(timer, i, arr){
+	res = false;
+	let key = JSON.stringify(timer);
+	if (typeof timer.name != "undefined"){
+	    if (typeof timer.id == "undefined"){
+		res = 'Не указан ID сценария.';
+	    }
+	    if (typeof timer.days == "undefined"){
+		res = 'Не указаны дни.';
+	    }
+	    if (typeof timer.hour == "undefined"){
+		res = 'Не указан час.';
+	    }
+	    
+	    start_time = false;
+	    if (res == false){
+		for (let d of timer.days){
+		    if (day == d){
+			start_time = new Date();
+			break;
+		    }
+		}
+		
+		if (start_time !== false){
+		    start_time.setHours(timer.hour);
+		    if (typeof timer.min != "undefined"){
+			start_time.setMinutes(timer.min);
+		    }else{
+			start_time.setMinutes(0);
+		    }
+		    start_time.setSeconds(0,0);
+		    end_time = parseInt(start_time.getTime()/1000) + (timer_interval/1000);
+		    start_time = parseInt(start_time.getTime()/1000);
+		}
+	    }
+	    if (start_time !== false && (start_time <= now && now <= end_time)){
+		if (typeof timers_active[key] != "undefined"){
+		    res = 'Был запущен';
+		}else{
+		    res = 'запускаю';
+		    timers_active[key] = true;
+		    cmds.push(timer.id);
+		}
+	    }else{
+		delete timers_active[key];
+	    }
+	    let printable_date = sprintf("%02d.%02d.%04d %02d:%02d:%02d",time.getDate(),time.getMonth(),time.getFullYear(),time.getHours(),time.getMinutes(),time.getSeconds());
+	    console.debug('['+ printable_date + ']: Process timer [' + timer.name + '], result [' + res + ']');
+	}
+    });
+    //console.debug('timers_active',timers_active);
+    if (cmds.length > 0){
+	console.debug('run commands',cmds);
+	let csrf = await get_csrf();
+	console.log('config.csrf',config.csrf);
+	if (config.csrf){
+		for(i = 0; i < cmds.length; i++){
+		    let run = await alice_run(cmds[i]);
+		    console.debug('alice_run ' + cmds[i] + 'res:',run);
+		}
+	}else{
+	    throw new Error('No csrf');
+	}
+    }
 }
 
 app.get('/', function (req, res) {
