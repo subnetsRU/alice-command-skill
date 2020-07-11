@@ -2,8 +2,8 @@
     Author: Nikolaev Dmitry (VI:RUS)
     Licence: MIT
     
-    Version: 0.3.0
-    Date: 05.07.2020
+    Version: 0.4.0
+    Date: 11.07.2020
     Description: https://wiki.yaboard.com/s/nw
     Source: https://github.com/subnetsRU/alice-command-skill
     
@@ -40,8 +40,7 @@ function refreshTimers(){
  return timers;
 }
 
-var timer_interval = ((typeof config.timer_period != "undefined" && config.timer_period > 0) ? (config.timer_period * 60) : (5*60)) * 1000;
-//setTimeout(proc_timers,timer_interval);
+var timer_interval = (((typeof config.timer_period != "undefined" && parseInt(config.timer_period) > 0) ? (config.timer_period * 60) : (5*60)) * 1000);
 setInterval(async () => {
     var time = new Date();
     let printable_date = sprintf("%02d.%02d.%04d %02d:%02d:%02d",time.getDate(),time.getMonth(),time.getFullYear(),time.getHours(),time.getMinutes(),time.getSeconds());
@@ -216,6 +215,7 @@ async function wys(str){
 	    intents: {},
 	};
 	var end = false;
+	var err = [];
 	
 	if (str === 'ping') {
 	    text.push('pong');
@@ -308,25 +308,24 @@ async function wys(str){
 		    }
 		}
 		if (typeof matches[5] != "undefined"){
-		    if ((/(будням|будни|выходным|выходные|часов|часа|час)/).test(matches[5])){
+		    if ((/(будням|будни|выходным|выходные|часов|часа|час|минут|минуты)/).test(matches[5])){
 			twhen = matches[5];
 		    }
 		}
 	    }
+	    
 	    if (scenario === false){
-		text.push('Название сценария не найдено.');
+		err.push('Название сценария не найдено.');
 	    }else if (action === false){
-		text.push('Отсутствует действие с таймером.');
+		err.push('Отсутствует действие с таймером.');
 	    }else if (saction === false){
-		text.push('Отсутствует действие со сценарием.');
+		err.push('Отсутствует действие со сценарием.');
 	    }else if (twhen === false){
-		text.push('Отсутствует указание времени.');
-	    }else{
+		err.push('Отсутствует указание времени.');
+	    }
+	    
+	    if (err.length == 0){
 		tcfg = {name: scenario.name, action: saction, id: scenario.id};
-		//по будням
-		//по выходным
-		//(в|с) X часов
-		//(в|с) X часов X минут
 		if ((/(будням|будни|выходным|выходные)/).test(twhen)){
 		    if ((/(будням|будни)/).test(twhen)){
 			tcfg.days = [1,2,3,4,5];
@@ -334,23 +333,67 @@ async function wys(str){
 			tcfg.days = [6,0];
 		    }
 		}else{
+		    var weekDays = {
+			'1': ['понедельник','понедельникам'],
+			'2': ['вторник','вторникам'],
+			'3': ['среда','среду','средам'],
+			'4': ['четверг','четвергам'],
+			'5': ['пятница','пятницу','пятницам'],
+			'6': ['суббота','субботу','субботам'],
+			'0': ['воскресенье','воскресеньям'],
+		    };
+		    let tmp = [];
+		    for (const [key, value] of Object.entries(weekDays)) {
+			let regexp = '(' + value.join('|') + ')';
+			let re = new RegExp(regexp,'u');
+			let matches = twhen.match(re);
+			if (matches !== null){
+			    tmp.push(parseInt(key));
+			}
+		    }
+		    if (tmp.length > 0){
+			tcfg.days = tmp;
+		    }
+		}
+		
+		if (typeof tcfg.days == "undefined"){
 		    tcfg.days = [0,1,2,3,4,5,6];
 		}
-		regexp = /(в|с)\s(\d+)\s(часов|часа|час)/;
-		matches = twhen.match(regexp);
+		
+		regexp ='(в|с|через)\\s(\\d+)\\s(часов|часа|час)';
+		re = new RegExp(regexp,'u');
+		matches = twhen.match(re);
 		if (matches != null){
 		    if (typeof matches[2] != "undefined"){
 			tcfg.hour = matches[2];
 		    }
 		}
-		regexp = /(в|с)\s\d+\sчасов\s(\d+)\s(минут|минуты)/;
-		matches = twhen.match(regexp);
+		
+		if (tcfg.hour > 24){
+		    err.push('Часы не могут быть больше 24.');
+		}
+		
+		
+		regexp = '\\s(\\d+)\\s(минут|минуты)';
+		re = new RegExp(regexp,'u');
+		matches = twhen.match(re);
 		if (matches != null){
-		    if (typeof matches[2] != "undefined"){
-			tcfg.min = matches[2];
+		    if (typeof matches[1] != "undefined"){
+			tcfg.min = matches[1];
 		    }
 		}
 		
+		if (tcfg.min > 59){
+		    err.push('Минуты не должны превышать 59.');
+		}
+		
+		if ((/через/).test(twhen)){
+		    tcfg.once = parseInt(new Date().getTime()/1000) + ((typeof tcfg.hour != "undefined") ? (tcfg.hour * 60 * 60) : 0) + ((typeof tcfg.min != "undefined") ? (tcfg.min * 60) : 0);
+		    delete tcfg.days;
+		}
+	    }
+	    
+	    if (err.length == 0){
 		if (action == 'add'){
 		    timers.push(tcfg);
 		    text.push("Таймер добавлен.");
@@ -367,11 +410,19 @@ async function wys(str){
 		    if (del > 0){
 			text.push("Таймер удален.");
 		    }else{
-			text.push("Таймер для удаления не найден.");
+			err.push("Таймер для удаления не найден.");
 		    }
 		}
+	    }
+	    
+	    if (err.length == 0){
 		fs.writeFileSync('./timers.json',JSON.stringify(timers));
 	    }
+	    
+	    if (err.length > 0){
+		text.push('Ошибки: ' + err.join(' '));
+	    }
+	    
 	    console.debug(action,saction,scenario,(typeof tcfg == "undefined") ? null:tcfg);
 	    end = true;
 	}
@@ -487,41 +538,55 @@ async function proc_timers(){
 	    if (typeof timer.id == "undefined"){
 		res = 'Не указан ID сценария.';
 	    }
-	    if (typeof timer.days == "undefined"){
-		res = 'Не указаны дни.';
-	    }
-	    if (typeof timer.hour == "undefined"){
-		res = 'Не указан час.';
-	    }
 	    
-	    start_time = false;
-	    if (res == false){
-		for (let d of timer.days){
-		    if (day == d){
-			start_time = new Date();
-			break;
-		    }
+	    if (typeof timer.once == "undefined"){
+		if (typeof timer.days == "undefined"){
+		    res = 'Не указаны дни.';
+		}
+		if (typeof timer.hour == "undefined"){
+		    res = 'Не указан час.';
 		}
 		
-		if (start_time !== false){
-		    start_time.setHours(timer.hour);
-		    if (typeof timer.min != "undefined"){
-			start_time.setMinutes(timer.min);
-		    }else{
-			start_time.setMinutes(0);
+		start_time = false;
+		if (res == false){
+		    for (let d of timer.days){
+			if (day == d){
+			    start_time = new Date();
+			    break;
+			}
 		    }
-		    start_time.setSeconds(0,0);
-		    end_time = parseInt(start_time.getTime()/1000) + (timer_interval/1000);
-		    start_time = parseInt(start_time.getTime()/1000);
+		
+		    if (start_time !== false){
+			start_time.setHours(timer.hour);
+			if (typeof timer.min != "undefined"){
+			    start_time.setMinutes(timer.min);
+			}else{
+			    start_time.setMinutes(0);
+			}
+			start_time.setSeconds(0,0);
+			end_time = parseInt(start_time.getTime()/1000) + ((timer_interval/1000) * 2);
+			start_time = parseInt(start_time.getTime()/1000);
+		    }
 		}
+	    }else{
+		start_time = new Date((timer.once * 1000));
+		start_time.setSeconds(0,0);
+		end_time = parseInt(start_time.getTime()/1000) + ((timer_interval/1000) * 2);
+		start_time = parseInt(start_time.getTime()/1000);
 	    }
+	    
 	    if (start_time !== false && (start_time <= now && now <= end_time)){
 		if (typeof timers_active[key] != "undefined"){
 		    res = 'Был запущен';
 		}else{
 		    res = 'запускаю';
-		    timers_active[key] = true;
 		    cmds.push(timer.id);
+		    if (typeof timer.once == "undefined"){
+			timers_active[key] = true;
+		    }else{
+			timers.splice(i, 1);
+			fs.writeFileSync('./timers.json',JSON.stringify(timers));
+		    }
 		}
 	    }else{
 		delete timers_active[key];
