@@ -2,9 +2,9 @@
     Author: Nikolaev Dmitry (VI:RUS)
     Licence: MIT
     
-    Version: 0.4.0
-    Date: 11.07.2020
-    Description: https://wiki.yaboard.com/s/nw
+    Version: 0.5.0
+    Date: 12.07.2020
+    Description: https://wiki.yaboard.com/s/oi
     Source: https://github.com/subnetsRU/alice-command-skill
     
     Yaboard: https://yaboard.com/task/5da05e4b75e2e73e5c847c84
@@ -15,14 +15,27 @@ const https = require('https');
 const express = require('express');			//https://expressjs.com/ru/4x/api.html
 const { includes, lowerCase, keys } = require('lodash');
 const sprintf = require("sprintf-js").sprintf;        //https://www.npmjs.com/package/sprintf-js
+const { Console } = require('console');
+const path = require('path');
+const util = require('util');
 const exit = process.exit;
+process.title = 'alice-command-skill';
 
 var config = require("./config.js");
 config.csrf = '';
 config.port = config.port || 8443;
+config.log.type = config.log.type || 'cli';
+config.log.logfile = '';
+
+if (config.log.type == 'all' || config.log.type == 'log'){
+    config.log.folder = __dirname;
+    config.log.log_file_name = config.log.log_file_name || "acs.log";
+    config.log.logfile = config.log.folder + '/' + config.log.log_file_name;
+}
 
 var timers = refreshTimers();
 var timers_active = {};
+
 function refreshTimers(){
     var timers = [];
     if (fs.existsSync('./timers.json')) {
@@ -42,9 +55,7 @@ function refreshTimers(){
 
 var timer_interval = (((typeof config.timer_period != "undefined" && parseInt(config.timer_period) > 0) ? (config.timer_period * 60) : (5*60)) * 1000);
 setInterval(async () => {
-    var time = new Date();
-    let printable_date = sprintf("%02d.%02d.%04d %02d:%02d:%02d",time.getDate(),time.getMonth(),time.getFullYear(),time.getHours(),time.getMinutes(),time.getSeconds());
-    console.log(sprintf('[%s] Start timers process. Timers total: %d',printable_date,timers.length));
+    console.info('Start timers process. Timers total: '+ timers.length);
     try {
         await proc_timers();
     } catch (e) {
@@ -139,7 +150,7 @@ function alice_run(scenario){
 	    var req = https.request(options, (res) => {
 		console.debug(sprintf('alice_run response code [%s] message [%s]', res.statusCode,res.statusMessage));
 		if (res.statusCode == 200){
-		    console.log("Execute command: run scenario: ok");
+		    console.debug("Execute command: run scenario: ok");
 		    resolve("Execute command: run scenario: ok");
 		}else{
 		    reject('response code #' + res.statusCode);
@@ -216,6 +227,15 @@ async function wys(str){
 	};
 	var end = false;
 	var err = [];
+	var weekDays = {
+	    '1': ['понедельник','понедельникам'],
+	    '2': ['вторник','вторникам'],
+	    '3': ['среда','среду','средам'],
+	    '4': ['четверг','четвергам'],
+	    '5': ['пятница','пятницу','пятницам'],
+	    '6': ['суббота','субботу','субботам'],
+	    '0': ['воскресенье','воскресеньям'],
+	};
 	
 	if (str === 'ping') {
 	    text.push('pong');
@@ -225,7 +245,13 @@ async function wys(str){
 	if (end == false){
 	    for(let intent of config.intents.help){
 		if (includes(str, intent)) {
-		    text.push("Я приватный навык для управления умным домом. Если вы не владелец навыка, то вы тут ничего сделать не сможете.");
+		    text.push("Я могу выполнять несколько сценариев за одну команду. Например:");
+		    text.push("Выключи люстру и включи лампу и телевизор.");
+		    text.push("А так же могу выполнять сценарии по таймеру. Например:");
+		    text.push("Добавь таймер выключи телевизор через 15 минут.");
+		    text.push("Добавь таймер включи лампу в 21 час.");
+		    text.push("Добавь таймер выключи люстру по будням в 21 час 15 минут.");
+		    text.push("Подробнее в документации на wiki.yaboard.com");
 		    end = true;
 		}
 	    }
@@ -234,12 +260,12 @@ async function wys(str){
 	if (end == false){
 	    getIntents = keys(config.intents);
 	    for (let i of getIntents){
-		console.debug('getIntents',i);
+		//console.debug('getIntents',i);
 		if (typeof config.intents[i] == "object"){
 		    //for (let item of config.intents[i]) {
 		    for (ik = 0; ik < config.intents[i].length; ik++){
 			let item = config.intents[i][ik];
-			console.debug('\t'+ ik + ': ' + item + ' => ' +includes(str, item));
+			//console.debug('\t'+ ik + ': ' + item + ' => ' +includes(str, item));
 			if (includes(str, item)) {
 			    if (typeof search.intents[i] == "undefined"){
 				search.intents[i] = 0;
@@ -250,14 +276,72 @@ async function wys(str){
 		}
 	    }
 	    
-	    //console.log('found intents [' + search.intents.join(' ') + ']',search.intents.length);
-	    console.log(search);
+	    //console.debug(search);
 	}
 	if (typeof config.scenarios == "undefined"){
 	    text.push('Сценарии отсутствуют. Проверьте конфигурационный файл навыка.');
 	    end = true;
 	}
 	
+	if (end == false && (typeof search.intents['timers'] != "undefined")){
+	    let regexp = '(какие\\s(есть|установлены|добавлены|созданы)|список)\\s' + config.intents.timers.join('|') + '[а-я]{1,2}?';
+	    let re = new RegExp(regexp,'u');
+	    let matches = str.match(re);
+	    if (matches !== null){
+		if (timers.length > 0){
+		    text.push("Всего таймеров: " + timers.length + '.');
+		    timers.forEach(function(timer, i, arr){
+			let tmp = [];
+			console.log(timer);
+			tmp.push((i+1) + '. ' + timer.name);
+			tmp.push(config.intents[timer.action][0]);
+			let when = [];
+			if (typeof timer.days != "undefined"){
+			    if (timer.days.length == 7){
+				when.push('ежедневно');
+			    }else if(timer.days.sort().toString() == [6,0].sort().toString()){
+				when.push('по выходным');
+			    }else if(timer.days.sort().toString() == [1,2,3,4,5].sort().toString()){
+				when.push('по будням');
+			    }else{
+				for(let day of timer.days){
+				    if(typeof weekDays[day] !== "undefined"){
+					when.push(weekDays[day][0]);
+				    }
+				}
+			    }
+			}
+			if (typeof timer.once != "undefined"){
+			    let time = new Date((timer.once * 1000));
+			    when.push('один раз');
+			    timer.hour = time.getHours();
+			    timer.min = time.getMinutes();
+			}
+			
+			if (typeof timer.hour != "undefined"){
+			    let tmp = 'час';
+			    if (timer.hour == 0){
+				tmp = 'часов';
+			    }else if ((timer.hour >= 2 && timer.hour < 5) || (timer.hour >= 22 && timer.hour < 25)){
+				tmp = 'часа';
+			    }else if (timer.hour >= 5 && timer.hour < 21){
+				tmp = 'часов';
+			    }
+			    when.push('в ' + timer.hour + ' ' + tmp);
+			}
+			if (typeof timer.min != "undefined"){
+			    when.push(timer.min + ' минут');
+			}
+			tmp.push(when.join(' '));
+			
+			text.push(tmp.join(', ') + '.');
+		    });
+		}else{
+		    text.push("Таймеры отсутствуют.");
+		}
+		end = true;
+	    }
+	}
 	if (end == false && (typeof search.intents['timers'] != "undefined")){
 	    var actions = config.intents.action_add.concat(config.intents.action_del);
 	    var en_dis = config.intents.enable.concat(config.intents.disable);
@@ -333,15 +417,6 @@ async function wys(str){
 			tcfg.days = [6,0];
 		    }
 		}else{
-		    var weekDays = {
-			'1': ['понедельник','понедельникам'],
-			'2': ['вторник','вторникам'],
-			'3': ['среда','среду','средам'],
-			'4': ['четверг','четвергам'],
-			'5': ['пятница','пятницу','пятницам'],
-			'6': ['суббота','субботу','субботам'],
-			'0': ['воскресенье','воскресеньям'],
-		    };
 		    let tmp = [];
 		    for (const [key, value] of Object.entries(weekDays)) {
 			let regexp = '(' + value.join('|') + ')';
@@ -417,13 +492,14 @@ async function wys(str){
 	    
 	    if (err.length == 0){
 		fs.writeFileSync('./timers.json',JSON.stringify(timers));
+		if (typeof tcfg != "undefined"){
+		    console.debug('timer ' + action,tcfg);
+		}
 	    }
 	    
 	    if (err.length > 0){
 		text.push('Ошибки: ' + err.join(' '));
 	    }
-	    
-	    console.debug(action,saction,scenario,(typeof tcfg == "undefined") ? null:tcfg);
 	    end = true;
 	}
 	
@@ -591,24 +667,89 @@ async function proc_timers(){
 	    }else{
 		delete timers_active[key];
 	    }
-	    let printable_date = sprintf("%02d.%02d.%04d %02d:%02d:%02d",time.getDate(),time.getMonth(),time.getFullYear(),time.getHours(),time.getMinutes(),time.getSeconds());
-	    console.debug('['+ printable_date + ']: Process timer [' + timer.name + '], result [' + res + ']');
+	    console.debug('Process timer [' + timer.name + '] => result [' + res + ']');
 	}
     });
     //console.debug('timers_active',timers_active);
     if (cmds.length > 0){
 	console.debug('run commands',cmds);
 	let csrf = await get_csrf();
-	console.log('config.csrf',config.csrf);
+	//console.debug('config.csrf',config.csrf);
 	if (config.csrf){
-		for(i = 0; i < cmds.length; i++){
-		    let run = await alice_run(cmds[i]);
-		    console.debug('alice_run ' + cmds[i] + 'res:',run);
-		}
+	    for(i = 0; i < cmds.length; i++){
+		let run = await alice_run(cmds[i]);
+		//console.debug('alice_run [' + cmds[i] + '] result [' + run + ']');
+	    }
 	}else{
 	    throw new Error('No csrf');
 	}
     }
+}
+
+var redirectConsole = function(path){
+/*
+ * @param (string) path to log file
+*/
+    var lpath = (typeof path == "undefined") ? "/dev/null" : path;
+    this.data = [];
+
+    this.origConsole = new console.Console(process.stdout,process.stderr);
+    var self = this;
+
+    this.main = function(type,arg){
+	var datetime = new Date();
+	var time = sprintf("%02d.%02d.%04d %02d:%02d:%02d",datetime.getDate(),datetime.getMonth(),datetime.getFullYear(),datetime.getHours(),datetime.getMinutes(),datetime.getSeconds());
+	if (type){
+	    arg.unshift('['+type+']');
+	}
+	arg.unshift('['+time+']');
+	self.data.push(util.format.apply(null, arg) + '\n');
+	if (config.log.type == 'cli' || config.log.type == 'all'){
+	    if (!type){
+		type = 'log';
+	    }
+	    let tmp = [];
+	    for(let d of arg){
+		if(typeof d == "string"){
+		    tmp.push(d);
+		}else{
+		    tmp.push(sprintf("%j",d));
+		}
+	    }
+	    //self.origConsole[type.toLowerCase()](arg);
+	    self.origConsole[type.toLowerCase()](tmp.join(' '));
+	}
+    }
+    this.debug = function(){
+	self.main('DEBUG',[].slice.call(arguments));
+    }
+    this.log = function(){
+	self.main(null,[].slice.call(arguments));
+    }
+    this.info = function(){
+	self.main('INFO',[].slice.call(arguments));
+    }
+    this.error = function(){
+	self.main('ERROR',[].slice.call(arguments));
+    }
+    this.warn = function(){
+	self.main('WARN',[].slice.call(arguments));
+    }
+    this.clear = function(){
+	self.data = [];
+    }
+    this.len = function(){
+	return self.data.length;
+    }
+    this.save = function(){
+	if (config.log.type == 'log' || config.log.type == 'all'){
+	    let len = self.data.length;
+	    for(i=0; i<len; i++){
+		fs.appendFileSync(lpath,self.data.shift());
+	    }
+	}
+    }
+    setInterval(this.save, 500);
 }
 
 app.get('/', function (req, res) {
@@ -623,20 +764,27 @@ app.post('/', function (req, res) {
     req.on("end",function(){
 	//console.debug('Got body:', bodyStr);
 	async function reply(req,res,body){
+	    //Default responce
 	    var resp = {
 		version: '1.0',
 		response: {
-		    text: "Что-то пошло не так...",
-		    tts: "Что-то пошло не так.",
+		    text: "Что-то у меня пошло не так...",
+		    tts: "Что-то у меня пошло не так.",
 		    end_session: true,
 		},
 	    };
+	    var session_id = 'unknown';
 	    
-	    json = false;
+	    var json = false;
+	    var auth = false;
+	    
 	    try {
 		json = JSON.parse(body);
 		resp.version = json.version;
 		console.debug('incoming JSON:',json);
+		if(typeof json.session != "undefined" && typeof json.session.session_id != "undefined"){
+		    session_id = json.session.session_id;
+		}
 		if (json.request.command == "ping"){
 		    resp.response.text = 'pong';
 		    delete resp.response.tts;
@@ -648,7 +796,6 @@ app.post('/', function (req, res) {
 	    }
 	    
 	    if (json !== false){
-		auth = false;
 		if (typeof json.session.user != "undefined" && typeof json.session.user.user_id != "undefined"){
 		    for(let uid of config.auth.user_id){
 			if (uid === json.session.user.user_id){
@@ -674,7 +821,7 @@ app.post('/', function (req, res) {
 		    if (typeof json.session.user_id != "undefined"){
 			for(let uid of config.auth.application){
 			    if (uid === json.session.application.application_id){
-				console.debug('Authentication by user_id');
+				console.debug('Authentication by depecated session.user_id');
 				auth = true;
 				break;
 			    }
@@ -687,23 +834,32 @@ app.post('/', function (req, res) {
 		    }
 		    catch(error){
 			console.error('make_response error:',error);
-			resp.response.text += ' Во время выполнения произошла какая то ошибка.';
-			resp.response.tts += ' Во время выполнения произошла какая то ошибка.';
+			resp.response.text += ' Во время выполнения произошла какая то ошибка. Попробуйте повторить запрос. Слушаю вас.';
+			resp.response.tts += ' Во время выполнения произошла какая то ошибка. Попробуйте повторить запрос. Слушаю вас.';
 			resp.response.end_session = false;
 		    }
 		}else{
-		    resp.response.text = 'Вы не авторизованы для использования данного навыка.';
+		    resp.response.text = 'Это приватный навык и Вы не авторизованы для его использования.';
 		    resp.response.tts = resp.response.text;
+		}
+		
+		if (resp.response.text.length > 1024){
+		    resp.response.text = resp.response.text.substr(0,1020) + '...';
+		}
+		resp.response.tts = resp.response.tts.replace(/wiki.yaboard.com/gi,'вики я бо+орд точка ком');
+		if (resp.response.tts.length > 1024){
+		    resp.response.tts = resp.response.tts.substr(0,1020) + '...';
 		}
 	    }
 	    
-	    console.log('response',resp);
+	    console.debug('reply[' + session_id + ']:',resp);
 	    res.json(resp);
         }
         reply(req,res,bodyStr);
     });
 });
 
+console = new redirectConsole(config.log.logfile);
 var server = https.createServer(serverOptions, app).listen(config.port);
 
 /*
