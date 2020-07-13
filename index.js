@@ -2,8 +2,8 @@
     Author: Nikolaev Dmitry (VI:RUS)
     Licence: MIT
     
-    Version: 0.5.0
-    Date: 12.07.2020
+    Version: 0.5.1
+    Date: 13.07.2020
     Description: https://wiki.yaboard.com/s/oi
     Source: https://github.com/subnetsRU/alice-command-skill
     
@@ -667,7 +667,7 @@ async function proc_timers(){
 	    }else{
 		delete timers_active[key];
 	    }
-	    console.debug('Process timer [' + timer.name + '] => result [' + res + ']');
+	    console.debug('Process timer [' + timer.action + ': ' + timer.name + '] => result [' + res + ']');
 	}
     });
     //console.debug('timers_active',timers_active);
@@ -698,7 +698,7 @@ var redirectConsole = function(path){
 
     this.main = function(type,arg){
 	var datetime = new Date();
-	var time = sprintf("%02d.%02d.%04d %02d:%02d:%02d",datetime.getDate(),datetime.getMonth(),datetime.getFullYear(),datetime.getHours(),datetime.getMinutes(),datetime.getSeconds());
+	var time = sprintf("%02d.%02d.%04d %02d:%02d:%02d",datetime.getDate(),(datetime.getMonth() + 1),datetime.getFullYear(),datetime.getHours(),datetime.getMinutes(),datetime.getSeconds());
 	if (type){
 	    arg.unshift('['+type+']');
 	}
