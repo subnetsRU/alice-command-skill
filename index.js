@@ -2,8 +2,8 @@
     Author: Nikolaev Dmitry (VI:RUS)
     Licence: MIT
     
-    Version: 0.5.1
-    Date: 13.07.2020
+    Version: 0.6.0
+    Date: 19.07.2020
     Description: https://wiki.yaboard.com/s/oi
     Source: https://github.com/subnetsRU/alice-command-skill
     
@@ -19,6 +19,8 @@ const { Console } = require('console');
 const path = require('path');
 const util = require('util');
 const exit = process.exit;
+const argv = process.argv.slice(2);
+const readline = require("readline");
 process.title = 'alice-command-skill';
 
 var config = require("./config.js");
@@ -26,6 +28,9 @@ config.csrf = '';
 config.port = config.port || 8443;
 config.log.type = config.log.type || 'cli';
 config.log.logfile = '';
+config.login = config.login || '';
+config.pass = config.pass || '';
+config.cookie = config.cookie || '';
 
 if (config.log.type == 'all' || config.log.type == 'log'){
     config.log.folder = __dirname;
@@ -33,6 +38,7 @@ if (config.log.type == 'all' || config.log.type == 'log'){
     config.log.logfile = config.log.folder + '/' + config.log.log_file_name;
 }
 
+var last_report = {};
 var timers = refreshTimers();
 var timers_active = {};
 
@@ -54,14 +60,6 @@ function refreshTimers(){
 }
 
 var timer_interval = (((typeof config.timer_period != "undefined" && parseInt(config.timer_period) > 0) ? (config.timer_period * 60) : (5*60)) * 1000);
-setInterval(async () => {
-    console.info('Start timers process. Timers total: '+ timers.length);
-    try {
-        await proc_timers();
-    } catch (e) {
-        console.warn("caught: " + e.message)
-    }
-}, timer_interval);
 
 var app = express();
 const serverOptions = {
@@ -70,7 +68,68 @@ const serverOptions = {
   requestCert: false,
 };
 
-async function get_csrf(){
+function get_cookie(){
+    let promise = new Promise((resolve, reject) => {
+	    config.cookie = '';
+	    request =  'login=' + config.login + '&passwd=' + config.pass;
+	    let options = {
+		//https://passport.yandex.ru/passport?mode=auth&retpath=https://ya.ru
+		protocol: 'https:',
+		hostname: 'passport.yandex.ru',
+		path: '/passport?mode=auth&retpath=https://ya.ru',
+		method: 'POST',
+		headers: {
+		    'Content-Type': 'application/x-www-form-urlencoded',
+		},
+		timeout: 2000,
+		agent: false
+	    }
+	    var req = https.request(options, (res) => {
+		console.debug(sprintf('get_cookie response code [%s] message [%s]', res.statusCode,res.statusMessage));
+		if (res.statusCode == 302){
+		    cookies = '';
+		    if (typeof res.headers['set-cookie'] != "undefined"){
+			//console.debug('get_cookie response headers:',res.headers['set-cookie']);
+			res.headers['set-cookie'].forEach(function(item, i, arr){
+			    tmp_cookie = item.substring(0, item.indexOf('; ')) + ";";
+			    cookies += tmp_cookie;
+			});
+		    }
+		    //console.debug('cookies',cookies);
+		    if (cookies){
+			config.cookie = cookies;
+			console.info('get cookies success');
+		    }else{
+			console.error('get cookies failed');
+		    }
+		}else{
+		    console.debug('get_cookie response headers:',res.headers);
+		    reject('get_cookie response code #' + res.statusCode);
+		}
+	    });
+	    req.on('error', (error) => {
+		console.error(sprintf('get_cookie request failed [%s]',error));
+		reject(error);
+	    });
+	    req.on('timeout',(data) => {
+		console.error(sprintf('get_cookie timeout, aborting request'));
+		req.abort();
+		reject('get_cookie timeout');
+	    });
+	    
+	    req.on('close',() => {
+		console.debug(sprintf('get_cookie request closed'));
+		if (config.cookie){
+		    resolve(config.cookie);
+		}
+	    });
+	    req.write(request);
+	    req.end();
+    });
+ return promise;
+}
+
+function get_csrf(){
     let promise = new Promise((resolve, reject) => {
 	    csrf = '';
 	    request =  '';
@@ -90,8 +149,8 @@ async function get_csrf(){
 	    var req = https.request(options, (res) => {
 		console.debug(sprintf('get_csrf response code [%s] message [%s]', res.statusCode,res.statusMessage));
 		if (res.statusCode != 200){
-		    reject('get_csrf response code #' + res.statusCode);
 		    console.debug('get_csrf response headers:',res.headers);
+		    reject('get_csrf response code #' + res.statusCode);
 		}
 		res.on('data', (data) => {
 		    data = data.toString();
@@ -102,8 +161,7 @@ async function get_csrf(){
 			//console.log('matches',matches);
 			if (matches != null && typeof matches[1] != 'undefined'){
 			    config.csrf = matches[1];
-			    //console.log('++set config.csrf',config.csrf);
-			    resolve(config.csrf);
+			    console.info('get csrf success');
 			}
 		    }
 		});
@@ -120,7 +178,9 @@ async function get_csrf(){
 	    
 	    req.on('close',() => {
 		console.debug(sprintf('get_csrf request closed'));
-		resolve();
+		if (config.csrf){
+		    resolve(config.csrf);
+		}
 	    });
 
 	    req.write(request);
@@ -131,49 +191,68 @@ async function get_csrf(){
 
 function alice_run(scenario){
     let promise = new Promise((resolve, reject) => {
+	if (typeof scenario == 'string'){
+	    var tmp = scenario;
+	    scenario = { id: tmp };
+	    delete tmp;
+	}
+	if (typeof scenario.name == "undefined"){
+	    scenario.name = 'unknown';
+	}
+	if (typeof scenario.id != "undefined"){
 	    request =  '';
 	    let options = {
 		//https://iot.quasar.yandex.ru/m/user/scenarios/ + scenario_id + /actions
 		protocol: 'https:',
 		hostname: 'iot.quasar.yandex.ru',
-		path: '/m/user/scenarios/' + scenario + '/actions',
+		path: '/m/user/scenarios/' + scenario.id + '/actions',
 		method: 'POST',
 		headers: {
 		    'Content-Type': 'application/x-www-form-urlencoded',
 		    'x-csrf-token' : config.csrf,
 		    'Cookie' : config.cookie,
 		},
-		timeout: 1000,
+		timeout: 2000,
 		agent: false
 	    }
 	    //console.log('alice_run opt',options);
 	    var req = https.request(options, (res) => {
 		console.debug(sprintf('alice_run response code [%s] message [%s]', res.statusCode,res.statusMessage));
+		last_report = { name: scenario.name, date: parseInt(new Date().getTime()/1000), status: res.statusCode };
+		console.debug('last_report',last_report);
 		if (res.statusCode == 200){
 		    console.debug("Execute command: run scenario: ok");
-		    resolve("Execute command: run scenario: ok");
+		    resolve(res.statusCode);
 		}else{
-		    reject('response code #' + res.statusCode);
 		    console.debug('response headers:',res.headers);
+		    reject(res.statusCode);
 		}
 	    });
 	    req.on('error', (error) => {
 		console.error(sprintf('alice_run request failed [%s]',error));
-		reject(error);
+		last_report = { name: scenario.name, date: parseInt(new Date().getTime()/1000), status: 'ошибка' };
+		console.debug('last_report',last_report);
+		reject("alice_run ошибка");
 	    });
 	    req.on('timeout',(data) => {
 		console.error(sprintf('timeout, aborting request'));
+		last_report = { name: scenario.name, date: parseInt(new Date().getTime()/1000), status: 'таймаут' };
+		console.debug('last_report',last_report);
 		req.abort();
-		reject('timeout');
+		reject('alice_run таймаут');
 	    });
 	    
 	    req.on('close',() => {
 		console.debug(sprintf('alice_run request closed'));
-		resolve();
 	    });
 
 	    req.write(request);
 	    req.end();
+	}else{
+	    last_report = { name: scenario.name, date: parseInt(new Date().getTime()/1000), status: 'неизвестен' };
+	    console.debug('last_report',last_report);
+	    reject('id сценария неизвестен.');
+	}
     });
  return promise;
 }
@@ -201,7 +280,18 @@ async function make_response(json,resp){
 	}
 	
 	if (typeof res != "undefined" && typeof res.cmd != "undefined"){
-	    let csrf = await get_csrf();
+	    if (config.login && config.pass && !config.cookie){
+		let gc = await get_cookie();
+	    }
+	    try{
+		let csrf = await get_csrf();
+	    }
+	    catch(e){
+		console.error('csrf error:',e);
+		if (config.login && config.pass){
+		    config.cookie = '';
+		}
+	    }
 	    if (config.csrf){
 		for(i = 0; i < res.cmd.length; i++){
 		    let run = await alice_run(res.cmd[i]);
@@ -252,7 +342,23 @@ async function wys(str){
 		    text.push("Добавь таймер включи лампу в 21 час.");
 		    text.push("Добавь таймер выключи люстру по будням в 21 час 15 минут.");
 		    text.push("Подробнее в документации на wiki.yaboard.com");
+		    text.push("Так же вы можете узнать стату последней операции по команде \"отчёт\".");
 		    end = true;
+		}
+	    }
+	}
+	
+	if (end == false){
+	    if (str == 'отчет' || str == 'счет'){
+		if(typeof last_report.name != "undefined"){
+		    let date = '';
+		    if(typeof last_report.date != "undefined"){
+			let time = new Date((last_report.date * 1000));
+			date = time.getDate() + ' числа в ' + time.getHours() + ':'+ time.getMinutes();
+		    }
+		    text.push('Сценарий "' + last_report.name + '" статус '+ last_report.status + (date ? ' от ' + date : '') + '.');
+		}else{
+		    text.push('Отчёт отсутствует.');
 		}
 	    }
 	}
@@ -281,6 +387,13 @@ async function wys(str){
 	if (typeof config.scenarios == "undefined"){
 	    text.push('Сценарии отсутствуют. Проверьте конфигурационный файл навыка.');
 	    end = true;
+	}
+	
+	if (end == false && (/\sчерез\s/).test(str)){
+	    if ( (typeof search.intents['timers'] == "undefined") && (typeof search.intents['enable'] != "undefined" || typeof search.intents['disable'] != "undefined") ){
+		str = 'добавить таймер ' + str;
+		search.intents['timers'] = true;
+	    }
 	}
 	
 	if (end == false && (typeof search.intents['timers'] != "undefined")){
@@ -544,7 +657,7 @@ async function wys(str){
 			if (typeof ret.cmd == "undefined"){
 			    ret.cmd = [];
 			}
-			ret.cmd.push(config.scenarios.enable[dev]);
+			ret.cmd.push({name: dev, id: config.scenarios.enable[dev]});
 			devices.push(dev);
 		    }else{
 			no_devices.push(dev);
@@ -569,7 +682,7 @@ async function wys(str){
 			if (typeof ret.cmd == "undefined"){
 			    ret.cmd = [];
 			}
-			ret.cmd.push(config.scenarios.disable[dev]);
+			ret.cmd.push({name: dev, id: config.scenarios.disable[dev]});
 			devices.push(dev);
 		    }else{
 			no_devices.push(dev);
@@ -656,7 +769,7 @@ async function proc_timers(){
 		    res = 'Был запущен';
 		}else{
 		    res = 'запускаю';
-		    cmds.push(timer.id);
+		    cmds.push(timer);
 		    if (typeof timer.once == "undefined"){
 			timers_active[key] = true;
 		    }else{
@@ -667,14 +780,29 @@ async function proc_timers(){
 	    }else{
 		delete timers_active[key];
 	    }
-	    console.debug('Process timer [' + timer.action + ': ' + timer.name + '] => result [' + res + ']');
+	    var ctype = 'debug';
+	    if (res != false){
+		ctype = 'info';
+	    }
+	    console[ctype]('Process timer [' + timer.action + ': ' + timer.name + '] => result [' + res + ']');
 	}
     });
     //console.debug('timers_active',timers_active);
     if (cmds.length > 0){
 	console.debug('run commands',cmds);
-	let csrf = await get_csrf();
-	//console.debug('config.csrf',config.csrf);
+	if (config.login && config.pass && !config.cookie){
+	    let gc = await get_cookie();
+	}
+	try{
+	    let csrf = await get_csrf();
+	}
+	catch(e){
+	    console.error('csrf error:',e);
+	    if (config.login && config.pass){
+		config.cookie = '';
+	    }
+	}
+	
 	if (config.csrf){
 	    for(i = 0; i < cmds.length; i++){
 		let run = await alice_run(cmds[i]);
@@ -750,6 +878,33 @@ var redirectConsole = function(path){
 	}
     }
     setInterval(this.save, 500);
+}
+
+var base64 = function(){
+    var _encode = function _encode(buffer) {
+	return buffer.toString('base64')
+	    .replace(/\+/g, '-') // Convert '+' to '-'
+	    .replace(/\//g, '_') // Convert '/' to '_'
+	    .replace(/=+$/, ''); // Remove ending '='
+    };
+    var _decode = function _decode(base64) {
+	// Add removed at end '='
+	base64 += Array(5 - base64.length % 4).join('=');
+	base64 = base64
+	    .replace(/\-/g, '+') // Convert '-' to '+'
+	    .replace(/\_/g, '/'); // Convert '_' to '/'
+	return new Buffer.from(base64, 'base64');
+    };
+
+    return {
+	encode: function encode(text){
+	    var buffer = Buffer.from(text);
+	    return _encode(buffer);
+	},
+	decode: function decode(base64){
+	    return _decode(base64).toString('utf8');
+	},
+    };
 }
 
 app.get('/', function (req, res) {
@@ -859,8 +1014,55 @@ app.post('/', function (req, res) {
     });
 });
 
-console = new redirectConsole(config.log.logfile);
-var server = https.createServer(serverOptions, app).listen(config.port);
+const b64 = base64();
+if (argv.length == 0){
+    if (config.login){
+	config.login = b64.decode(config.login);
+    }
+    if (config.pass){
+	config.pass = b64.decode(config.pass);
+    }
+    console = new redirectConsole(config.log.logfile);
+    var server = https.createServer(serverOptions, app).listen(config.port);
+
+    setInterval(async () => {
+	console.info('Start timers process. Timers total: '+ timers.length);
+	try {
+	    await proc_timers();
+	} catch (e) {
+	    if (e){
+		console.warn("timers caught:",e);
+	    }
+	}
+    }, timer_interval);
+}else{
+    if (argv[0] == 'help' || argv[0] == '-help' || argv[0] == '--help'){
+	console.info('Possible params:\n\tauth - encode login and password;');
+    }else if (argv[0] == 'auth'){
+	const rl = readline.createInterface({
+	    input: process.stdin,
+	    output: process.stdout
+	});
+	rl.question("Yandex login ? ", function(login) {
+	    rl.question("Yandex password ? ", function(pass) {
+		bl = b64.encode(login);
+		bp = b64.encode(pass);
+		console.info('\nLogin for config.js:',bl);
+		console.info('Pass for config.js:',bp);
+		rl.close();
+	    });
+	});
+	
+	rl.on("close", function() {
+	    console.log("\nPut them info config.js");
+	    exit(0);
+	});
+    }else{
+	console.error('Error: unknown params:',argv);
+	console.info('Try to run script with --help');
+	exit(1);
+    }
+}
 
 /*
     JSON Formatter: https://chrome.google.com/webstore/detail/json-formatter/bcjindcccaagfpapjjmafapmmgkkhgoa/related?hl=ru

@@ -14,7 +14,11 @@ module.exports = {
 	key: '/path/to/ssl.key',		//путь до файла с ключом от SSL сертификата
     },
     port: 8443,		//порт, на котором будут ожидаться запросы от яндекс диалогов
-    cookie: '',		//куки для авторизации на https://yandex.ru/quasar
+    //логин + пароль для авторизации в yandex (подробности в документации)
+    login: '',
+    pass: '',
+    //или куки для авторизации в yandex (подробности в документации)
+    cookie: '',
     speaker: 'REPLACE-BY-YANDEX-STATION-ID',	//id устройства яндекс.станция, взять на https://iot.quasar.yandex.ru/m/user/devices (example: ,{"id":"2077cfa6-2365-4ed4-97d5-4b46895762af","name":"Яндекс Станция","type":"devices.types.smart_speaker.yandex.station","capabilities":[],"properties":[],"groups":[],"skill_id":"Q"}]})
     auth:{
 	//Кому разрешено использовать навык (несколько user_id/application перечисляются через запятую), взять из запроса в навык (session.user.user_id и session.application.application_id) (https://yandex.ru/dev/dialogs/alice/doc/protocol-docpage/#request)
