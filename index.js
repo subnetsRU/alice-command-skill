@@ -2,14 +2,14 @@
     Author: Nikolaev Dmitry (VI:RUS)
     Licence: MIT
     
-    Version: 0.6.0
-    Date: 19.07.2020
+    Version: 0.6.1
+    Date: 29.07.2020
     Description: https://wiki.yaboard.com/s/oi
     Source: https://github.com/subnetsRU/alice-command-skill
     
     Yaboard: https://yaboard.com/task/5da05e4b75e2e73e5c847c84
 */
-
+//TODO: Паузы между сценариями
 const fs = require('fs');
 const https = require('https');
 const express = require('express');			//https://expressjs.com/ru/4x/api.html
@@ -21,7 +21,9 @@ const util = require('util');
 const exit = process.exit;
 const argv = process.argv.slice(2);
 const readline = require("readline");
+
 process.title = 'alice-command-skill';
+const scriptStartTime = new Date();
 
 var config = require("./config.js");
 config.csrf = '';
@@ -95,9 +97,8 @@ function get_cookie(){
 			    cookies += tmp_cookie;
 			});
 		    }
-		    //console.debug('cookies',cookies);
 		    if (cookies){
-			config.cookie = cookies;
+			config.cookie = cookies.trim();
 			console.info('get cookies success');
 		    }else{
 			console.error('get cookies failed');
@@ -150,17 +151,21 @@ function get_csrf(){
 		console.debug(sprintf('get_csrf response code [%s] message [%s]', res.statusCode,res.statusMessage));
 		if (res.statusCode != 200){
 		    console.debug('get_csrf response headers:',res.headers);
+		    if (config.login && config.pass){
+			console.info('Clean cookie for refresh next time');
+			config.cookie = '';
+		    }
 		    reject('get_csrf response code #' + res.statusCode);
 		}
 		res.on('data', (data) => {
 		    data = data.toString();
-		    if (!config.csrf){
+		    if (!csrf){
 			//console.log('data',data);
 			let re = /csrfToken2\":\"(\S+:\d+)\",\"/;	//"
 			let matches = data.match(re);
 			//console.log('matches',matches);
 			if (matches != null && typeof matches[1] != 'undefined'){
-			    config.csrf = matches[1];
+			    csrf = matches[1];
 			    console.info('get csrf success');
 			}
 		    }
@@ -171,15 +176,19 @@ function get_csrf(){
 		reject(error);
 	    });
 	    req.on('timeout',(data) => {
-		console.error(sprintf('get_csrf timeout, aborting request'));
+		console.error('get_csrf timeout, aborting request');
 		req.abort();
 		reject('get_csrf timeout');
 	    });
 	    
 	    req.on('close',() => {
-		console.debug(sprintf('get_csrf request closed'));
-		if (config.csrf){
+		console.debug('get_csrf request closed');
+		if (csrf){
+		    config.csrf = csrf;
 		    resolve(config.csrf);
+		}else{
+		    console.debug('csrf is empty');
+		    reject('csrf is empty');
 		}
 	    });
 
@@ -225,6 +234,12 @@ function alice_run(scenario){
 		    resolve(res.statusCode);
 		}else{
 		    console.debug('response headers:',res.headers);
+		    if (res.statusCode == 403){
+			if (config.login && config.pass){
+			    console.info('Clean cookie for refresh next time');
+			    config.cookie = '';
+			}
+		    }
 		    reject(res.statusCode);
 		}
 	    });
@@ -274,6 +289,9 @@ async function make_response(json,resp){
 	    }else{
 		resp.response.tts = resp.response.text;
 	    }
+	    if (typeof res.end_session != "undefined"){
+		resp.response.end_session = res.end_session;
+	    }
 	}
 	catch (error){
 	    console.error('words parser failed:',error);
@@ -295,7 +313,7 @@ async function make_response(json,resp){
 	    if (config.csrf){
 		for(i = 0; i < res.cmd.length; i++){
 		    let run = await alice_run(res.cmd[i]);
-		    console.debug('alice_run res:',run);
+		    console.info('alice_run res:',run);
 		}
 	    }else{
 		throw new Error('No csrf');
@@ -349,21 +367,6 @@ async function wys(str){
 	}
 	
 	if (end == false){
-	    if (str == 'отчет' || str == 'счет'){
-		if(typeof last_report.name != "undefined"){
-		    let date = '';
-		    if(typeof last_report.date != "undefined"){
-			let time = new Date((last_report.date * 1000));
-			date = time.getDate() + ' числа в ' + time.getHours() + ':'+ time.getMinutes();
-		    }
-		    text.push('Сценарий "' + last_report.name + '" статус '+ last_report.status + (date ? ' от ' + date : '') + '.');
-		}else{
-		    text.push('Отчёт отсутствует.');
-		}
-	    }
-	}
-	
-	if (end == false){
 	    getIntents = keys(config.intents);
 	    for (let i of getIntents){
 		//console.debug('getIntents',i);
@@ -387,6 +390,20 @@ async function wys(str){
 	if (typeof config.scenarios == "undefined"){
 	    text.push('Сценарии отсутствуют. Проверьте конфигурационный файл навыка.');
 	    end = true;
+	}
+	if (end == false){
+	    if (typeof search.intents['report'] != "undefined"){
+		if(typeof last_report.name != "undefined"){
+		    let date = '';
+		    if(typeof last_report.date != "undefined"){
+			let time = new Date((last_report.date * 1000));
+			date = sprintf("%s числа в %02d:%02d",time.getDate(),time.getHours(),time.getMinutes());
+		    }
+		    text.push(sprintf('Сценарий "%s" статус %s%s.' ,last_report.name,last_report.status,(date ? ' от ' + date : '')));
+		}else{
+		    text.push('Отчёт отсутствует.');
+		}
+	    }
 	}
 	
 	if (end == false && (/\sчерез\s/).test(str)){
@@ -505,7 +522,7 @@ async function wys(str){
 		    }
 		}
 		if (typeof matches[5] != "undefined"){
-		    if ((/(будням|будни|выходным|выходные|часов|часа|час|минут|минуты)/).test(matches[5])){
+		    if ((/(будням|будни|выходным|выходные|часов|часа|час|минут|минуты|утра|вечера)/).test(matches[5])){
 			twhen = matches[5];
 		    }
 		}
@@ -548,30 +565,38 @@ async function wys(str){
 		    tcfg.days = [0,1,2,3,4,5,6];
 		}
 		
-		regexp ='(в|с|через)\\s(\\d+)\\s(часов|часа|час)';
+		regexp ='(в|с|через)\\s(\\d+)\\s(часов|часа|час|утра|вечера)';
 		re = new RegExp(regexp,'u');
 		matches = twhen.match(re);
 		if (matches != null){
 		    if (typeof matches[2] != "undefined"){
-			tcfg.hour = matches[2];
+			tcfg.hour = parseInt(matches[2]);
+			if ((/вечера/).test(twhen)){
+			    if (tcfg.hour < 12){
+				tcfg.hour = (tcfg.hour + 12);
+			    }
+			}
+		    }
+		}else{
+		    if ((/в\sчас\sночи/).test(twhen)){
+			tcfg.hour = 1;
 		    }
 		}
 		
-		if (tcfg.hour > 24){
-		    err.push('Часы не могут быть больше 24.');
+		if (typeof tcfg.hour != "undefined" && tcfg.hour > 23){
+		    err.push('Часы не могут быть больше 23.');
 		}
-		
 		
 		regexp = '\\s(\\d+)\\s(минут|минуты)';
 		re = new RegExp(regexp,'u');
 		matches = twhen.match(re);
 		if (matches != null){
 		    if (typeof matches[1] != "undefined"){
-			tcfg.min = matches[1];
+			tcfg.min = parseInt(matches[1]);
 		    }
 		}
 		
-		if (tcfg.min > 59){
+		if (typeof tcfg.min != "undefined" && tcfg.min > 59){
 		    err.push('Минуты не должны превышать 59.');
 		}
 		
@@ -701,6 +726,7 @@ async function wys(str){
 
 	if (text.length == 0){
 	    ret.text = "Я вас не поняла, повторите пожалуйста.";
+	    ret.end_session = false;
 	}else{
 	    ret.text = text.join(' ');
 	}
@@ -755,6 +781,7 @@ async function proc_timers(){
 			start_time.setSeconds(0,0);
 			end_time = parseInt(start_time.getTime()/1000) + ((timer_interval/1000) * 2);
 			start_time = parseInt(start_time.getTime()/1000);
+			start_time = start_time - (scriptStartTime.getSeconds() + 1);
 		    }
 		}
 	    }else{
@@ -762,6 +789,7 @@ async function proc_timers(){
 		start_time.setSeconds(0,0);
 		end_time = parseInt(start_time.getTime()/1000) + ((timer_interval/1000) * 2);
 		start_time = parseInt(start_time.getTime()/1000);
+		start_time = start_time - (scriptStartTime.getSeconds() + 1);
 	    }
 	    
 	    if (start_time !== false && (start_time <= now && now <= end_time)){
@@ -784,12 +812,12 @@ async function proc_timers(){
 	    if (res != false){
 		ctype = 'info';
 	    }
-	    console[ctype]('Process timer [' + timer.action + ': ' + timer.name + '] => result [' + res + ']');
+	    console[ctype](sprintf('Process timer [%s: %s] [%s - %s] => result [%s]',timer.action,timer.name,from_unixtime(start_time),from_unixtime(end_time),(res === false) ? 'not now' : res));
 	}
     });
     //console.debug('timers_active',timers_active);
     if (cmds.length > 0){
-	console.debug('run commands',cmds);
+	console.debug('run [' + cmds.length + '] commands',cmds);
 	if (config.login && config.pass && !config.cookie){
 	    let gc = await get_cookie();
 	}
@@ -804,9 +832,9 @@ async function proc_timers(){
 	}
 	
 	if (config.csrf){
-	    for(i = 0; i < cmds.length; i++){
-		let run = await alice_run(cmds[i]);
-		//console.debug('alice_run [' + cmds[i] + '] result [' + run + ']');
+	    for (let command of cmds){
+		let run = await alice_run(command);
+		console.info('exec [' + command.name + '] result [' + run + ']');
 	    }
 	}else{
 	    throw new Error('No csrf');
@@ -905,6 +933,15 @@ var base64 = function(){
 	    return _decode(base64).toString('utf8');
 	},
     };
+}
+
+var from_unixtime = function(date){
+    if (date > 0){
+	var u = new Date(date * 1000) || 0;
+	return sprintf("%02s.%02s.%04s %02s:%02s:%02s",u.getDate(),u.getMonth() + 1,u.getFullYear(),u.getHours(),u.getMinutes(),u.getSeconds());
+    }else{
+	return false;
+    }
 }
 
 app.get('/', function (req, res) {

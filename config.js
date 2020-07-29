@@ -34,6 +34,7 @@ module.exports = {
 	timers: ['таймер'],
 	action_add: ['добавить','добавь'],
 	action_del: ['удалить','удали'],
+	report: ['отчет','отсчет','счет','а что','о чем'],
     },
     scenarios: {	//id сценариев взять на https://iot.quasar.yandex.ru/m/user/scenarios (example: {"id":"49c84e35-d1f3-4f8b-bc26-fe1ddd383d3f","name":"Включи люстру","icon":"day","devices":["люстра"]})
 	//формат: 'имя, которое вы использовали в созданном вами сценарии': 'ID сценария'
